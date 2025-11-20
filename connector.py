@@ -15,15 +15,15 @@ class HuaweiMaeClient:
         self.username = username
         self.password = password
         self.timeout = timeout
-        self.prompt = b'---    END'
+        self.mml_prompt = b'---    END'
         self.encoding = "ascii"
         self.tn: Optional[telnetlib.Telnet] = None
 
     def connect(self):
         self.tn = telnetlib.Telnet(self.host, self.port, self.timeout)
-        expected_initial_prompt = "Escape character is '^]'."
+        mae_prompt = "Escape character is '^]'."
         try:
-            self.tn.read_until(expected_initial_prompt.encode(self.encoding), timeout=self.timeout)
+            self.tn.read_until(mae_prompt.encode(self.encoding), timeout=self.timeout)
         except EOFError:
             pass
 
@@ -43,7 +43,7 @@ class HuaweiMaeClient:
 
     def _send_and_read(self, cmd: str) -> str:
         self.tn.write((cmd + "\r\n").encode(self.encoding))
-        data = self.tn.read_until(self.prompt, timeout=self.timeout)
+        data = self.tn.read_until(self.mml_prompt, timeout=self.timeout)
         return data.decode(self.encoding, errors="ignore")
 
     def _login(self, username: str, password: str) -> str:
