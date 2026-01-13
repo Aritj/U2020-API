@@ -1,7 +1,7 @@
 import re
 import json
 
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional
 
 # Regexes
 MSISDN_RE = re.compile(r"^298\d{6}$")
