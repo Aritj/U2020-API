@@ -14,26 +14,13 @@ class HuaweiMaeClient:
         self.timeout = timeout
         self.encoding = encoding
 
-    def connect(self):
-        self.telnet = telnetlib.Telnet(self.host, self.port, self.timeout)
-        try:
-            self.telnet.read_until(self.mae_prompt.encode(self.encoding), timeout=self.timeout)
-        except EOFError:
-            pass
-
-    def close(self):
-        if self.telnet is not None:
-            try:
-                self.telnet.close()
-            finally:
-                self.telnet = None
-
     def __enter__(self):
-        self.connect()
+        self.telnet = telnetlib.Telnet(self.host, self.port, self.timeout)
+        self.telnet.read_until(self.mae_prompt.encode(self.encoding), timeout=self.timeout)
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        self.close()
+        self.telnet.close()
 
     def _send_and_read(self, cmd: str) -> str:
         self.telnet.write((cmd + "\r\n").encode(self.encoding))
@@ -49,16 +36,15 @@ class HuaweiMaeClient:
     def _reg_vnfc(self, name: str) -> str:
         return self._send_and_read(f'REG VNFC:NAME="{name}";')
 
-    def query_ne_dict(self, ne_dict: [str, str], vnfc: str, query: str, parse: Callable[[str], Any]) -> Dict[str, Any]:
+    def query_ne(self, ip: str, vnfc: str, query: str, parse: Callable[[str], Any]) -> str:
+        # Not a very clean implementation -- but it works.
         self._login(self.username, self.password)
+        self._reg_ne(ip)
+        self._reg_vnfc(vnfc)
+        return parse(self._send_and_read(query))
 
-        response_dict = {}
-
-        for name, ip in ne_dict.items():
-            self._reg_ne(ip)
-            self._reg_vnfc(vnfc)
-            output = self._send_and_read(query)
-            response_dict[f'{name} ({ip})'] = parse(output)
-
-
-        return response_dict
+    def query_ne_dict(self, ne_dict: [str, str], vnfc: str, query: str, parse: Callable[[str], Any]) -> Dict[str, Any]:
+        return {
+            f'{name} ({ip})': self.query_ne(ip, vnfc, query, parse)
+            for name, ip in ne_dict.items()
+        }

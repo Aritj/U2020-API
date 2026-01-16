@@ -1,96 +1,102 @@
 import re
-import json
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-# Regexes
-MSISDN_RE = re.compile(r"^298\d{6}$")
+# Compiled regexes (module-level)
+MSISDN_RE = re.compile(r"298\d{6}\Z")
+
 RETCODE_RE = re.compile(r"RETCODE\s*=\s*(\d+)\s*(.*)")
 RESULT_COUNT_RE = re.compile(r"\(Number of results\s*=\s*\d+\)")
 PDP_CONTEXT_HEADER_RE = re.compile(
-    r'^PDP context on\s+'
-    r'(?P<node>.+?)\s+'        # <- allow spaces in node, non-greedy
-    r'SGID\s+(?P<sgid>\S+)\s+'
-    r'ContextIndex\s+(?P<context_index>\S+)\s+'
-    r'GtpuIndex\s+(?P<gtpu_index>\S+)\s+'
-    r'FilterIndex\s+(?P<filter_index>\S+)\s+'
-    r'SessionIndex\s+(?P<session_index>\S+)\s+'
-    r'BearerIndex\s+(?P<bearer_index>\S+)',
+    r"^PDP context on\s+"
+    r"(?P<node>.+?)\s+"
+    r"SGID\s+(?P<sgid>\S+)\s+"
+    r"ContextIndex\s+(?P<context_index>\S+)\s+"
+    r"GtpuIndex\s+(?P<gtpu_index>\S+)\s+"
+    r"FilterIndex\s+(?P<filter_index>\S+)\s+"
+    r"SessionIndex\s+(?P<session_index>\S+)\s+"
+    r"BearerIndex\s+(?P<bearer_index>\S+)",
     re.IGNORECASE,
 )
 
-# Named indexes
-RETCODE_LINE = 5
+Context = Dict[str, Any]
+
 
 def validate_msisdn(text: str) -> bool:
-    return bool(MSISDN_RE.match(text))
+    return MSISDN_RE.fullmatch(text) is not None
 
-def extract_retcode(line: str) -> (int, str):
-        """
-        Extract RETCODE and its message, if present.
 
-        Example:
-            'RETCODE = 0  Operation Success.'
-        """
-        match = RETCODE_RE.search(line)
-        code = int(match.group(1))
-        message = match.group(2).strip()
+def extract_retcode(line: str) -> Optional[Tuple[int, str]]:
+    """
+    Extract RETCODE and its message, if present.
 
-        return code, message
-
-def pdp_query_parser(text: str) -> Dict[str, Any]:
-    text_lines = text.splitlines()
-    code, message = extract_retcode(text_lines[RETCODE_LINE])
-
-    # Exit early if query is unsuccessful or RETCODE missing
-    if code != 0:
+    Example:
+        'RETCODE = 0  Operation Success.'
+    """
+    m = RETCODE_RE.search(line)
+    if not m:
         return None
-    
-    contexts: List[Dict[str, Any]] = []
-    current: Optional[Dict[str, Any]] = None
+    return int(m.group(1)), m.group(2).strip()
 
-    for line in text_lines:
-        # Stop parsing when we hit result count or END marker
-        if RESULT_COUNT_RE.search(line):
+
+def pdp_query_parser(text: str) -> Optional[List[Context]]:
+    """
+    Parse PDP query output.
+
+    Returns:
+        - list of context dicts on success (RETCODE == 0)
+        - None on non-zero RETCODE or missing RETCODE
+    """
+    lines = text.splitlines()
+
+    # Find RETCODE anywhere (instead of brittle fixed line index)
+    ret: Optional[Tuple[int, str]] = None
+    for line in lines:
+        ret = extract_retcode(line)
+        if ret is not None:
             break
 
-        # Detect start of a new PDP context
-        header_match = PDP_CONTEXT_HEADER_RE.match(line.strip())
-        if header_match:
-            # If we already had one open, store it
+    if ret is None:
+        return None
+
+    code, _message = ret
+    if code != 0:
+        return None
+
+    contexts: List[Context] = []
+    current: Optional[Context] = None
+
+    for raw in lines:
+        if RESULT_COUNT_RE.search(raw):
+            break
+
+        line = raw.strip()
+
+        header = PDP_CONTEXT_HEADER_RE.match(line)
+        if header:
             if current is not None:
                 contexts.append(current)
-
-            # Start new context dict with header fields
-            current = header_match.groupdict()
+            current = header.groupdict()
             continue
 
-        # Ignore everything until the first PDP context header
         if current is None:
             continue
 
-        s = line.strip()
-        if not s or "=" not in s:
-            # Skip blank lines, separators, etc.
+        if not line or "=" not in line:
             continue
 
-        key, val = s.split("=", 1)
-        key = key.strip()
-        val = val.strip()         
+        key, val = (part.strip() for part in line.split("=", 1))
 
-        # Handle duplicate keys by turning value into a list
-        if key in current:
-            existing = current[key]
-            if isinstance(existing, list):
-                existing.append(val)
-            else:
-                current[key] = [existing, val]
-        else:
+        # Store duplicates as list
+        prev = current.get(key)
+        if prev is None:
             current[key] = val
+        elif isinstance(prev, list):
+            prev.append(val)
+        else:
+            current[key] = [prev, val]
 
-    if current is None:
-        return contexts
-
-    contexts.append(current)
+    if current is not None:
+        contexts.append(current)
 
     return contexts
